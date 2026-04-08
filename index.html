@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Blufox Lunch Punch Audit</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0c0f14;--surface:#151921;--surface2:#1c2230;--surface3:#232a3a;--border:#2a3142;--accent:#f97316;--accent-dim:rgba(249,115,22,0.15);--green:#22c55e;--green-dim:rgba(34,197,94,0.15);--red:#ef4444;--red-dim:rgba(239,68,68,0.12);--yellow:#eab308;--yellow-dim:rgba(234,179,8,0.12);--blue:#3b82f6;--blue-dim:rgba(59,130,246,0.12);--purple:#a855f7;--purple-dim:rgba(168,85,247,0.12);--text:#e8ecf4;--text-dim:#8892a5;--text-muted:#5a6478}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min-height:100vh}
+.header{padding:28px 32px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:16px;background:linear-gradient(180deg,rgba(249,115,22,0.04) 0%,transparent 100%)}
+.header-icon{width:44px;height:44px;border-radius:10px;background:var(--accent-dim);border:1px solid rgba(249,115,22,0.25);display:flex;align-items:center;justify-content:center;font-size:22px}
+.header h1{font-size:22px;font-weight:700;letter-spacing:-0.3px}
+.header h1 span{color:var(--accent)}
+.header p{color:var(--text-dim);font-size:13px;margin-top:2px}
+.upload-zone{margin:24px 32px;border:2px dashed var(--border);border-radius:14px;padding:48px 24px;text-align:center;cursor:pointer;transition:all 0.25s;background:var(--surface)}
+.upload-zone:hover,.upload-zone.dragover{border-color:var(--accent);background:var(--accent-dim)}
+.upload-zone .icon{font-size:40px;margin-bottom:12px;opacity:0.8}
+.upload-zone .label{font-size:15px;font-weight:600}
+.upload-zone .sub{font-size:12px;color:var(--text-dim);margin-top:6px}
+.upload-zone input{display:none}
+.file-badge{display:inline-flex;align-items:center;gap:8px;background:var(--green-dim);border:1px solid rgba(34,197,94,0.3);border-radius:8px;padding:8px 14px;margin-top:12px;font-size:13px;font-weight:500;color:var(--green)}
+.dashboard{display:none;padding:0 32px 40px}.dashboard.active{display:block}
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin:24px 0}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px;position:relative;overflow:hidden}
+.stat-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px}
+.stat-card.orange::before{background:var(--accent)}.stat-card.red::before{background:var(--red)}.stat-card.green::before{background:var(--green)}.stat-card.yellow::before{background:var(--yellow)}.stat-card.blue::before{background:var(--blue)}
+.stat-label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.8px;color:var(--text-dim)}
+.stat-value{font-family:'Space Mono',monospace;font-size:28px;font-weight:700;margin-top:6px}
+.stat-card.orange .stat-value{color:var(--accent)}.stat-card.red .stat-value{color:var(--red)}.stat-card.green .stat-value{color:var(--green)}.stat-card.yellow .stat-value{color:var(--yellow)}.stat-card.blue .stat-value{color:var(--blue)}
+.stat-sub{font-size:11px;color:var(--text-muted);margin-top:4px}
+.filter-bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:20px 0 16px}
+.filter-bar label{font-size:12px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px}
+.filter-bar select,.filter-bar input{background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 12px;font-size:13px;font-family:'DM Sans',sans-serif;outline:none;transition:border-color 0.2s}
+.filter-bar select:focus,.filter-bar input:focus{border-color:var(--accent)}
+.btn{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:8px 18px;font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;transition:all 0.2s}
+.btn:hover{filter:brightness(1.15);transform:translateY(-1px)}
+.btn-outline{background:transparent;border:1px solid var(--border);color:var(--text-dim)}
+.btn-outline:hover{border-color:var(--accent);color:var(--accent)}
+.btn-sm{padding:5px 12px;font-size:12px;border-radius:6px}
+.tabs{display:flex;gap:2px;margin:20px 0 0;background:var(--surface);border-radius:10px;padding:4px;border:1px solid var(--border);width:fit-content}
+.tab{padding:8px 18px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;color:var(--text-dim);transition:all 0.2s;border:none;background:transparent;font-family:'DM Sans',sans-serif}
+.tab.active{background:var(--accent);color:#fff}
+.tab:hover:not(.active){color:var(--text)}
+.table-wrap{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-top:16px}
+.table-wrap table{width:100%;border-collapse:collapse}
+.table-wrap th{background:var(--surface2);padding:12px 16px;text-align:left;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.7px;color:var(--text-dim);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:2}
+.table-wrap td{padding:10px 16px;font-size:13px;border-bottom:1px solid var(--border);vertical-align:middle}
+.table-wrap tr:last-child td{border-bottom:none}
+.table-wrap tbody tr:hover td{background:rgba(249,115,22,0.04)}
+.table-scroll{max-height:560px;overflow-y:auto}
+.table-scroll::-webkit-scrollbar{width:6px}
+.table-scroll::-webkit-scrollbar-track{background:var(--surface)}
+.table-scroll::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+.badge{display:inline-block;padding:3px 10px;border-radius:6px;font-size:11px;font-weight:700;font-family:'Space Mono',monospace}
+.badge-red{background:var(--red-dim);color:var(--red)}
+.badge-green{background:var(--green-dim);color:var(--green)}
+.badge-yellow{background:var(--yellow-dim);color:var(--yellow)}
+.badge-orange{background:var(--accent-dim);color:var(--accent)}
+.badge-blue{background:var(--blue-dim);color:var(--blue)}
+.badge-purple{background:var(--purple-dim);color:var(--purple)}
+.clickable{cursor:pointer;text-decoration:underline;text-decoration-color:rgba(249,115,22,0.4);text-underline-offset:3px;transition:color 0.15s}
+.clickable:hover{color:var(--accent)}
+.store-bar{display:flex;align-items:center;gap:10px}
+.store-bar-fill{height:8px;border-radius:4px;min-width:4px;transition:width 0.5s ease}
+.breadcrumb{display:flex;align-items:center;gap:6px;margin:16px 0 8px;font-size:13px;flex-wrap:wrap}
+.breadcrumb a{color:var(--accent);cursor:pointer;text-decoration:none;font-weight:600}
+.breadcrumb a:hover{text-decoration:underline}
+.breadcrumb span{color:var(--text-muted)}
+.breadcrumb .current{color:var(--text);font-weight:600}
+.detail-panel{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 18px;margin-top:12px}
+.export-bar{display:flex;gap:10px;margin-top:20px;justify-content:flex-end;flex-wrap:wrap}
+.no-data{text-align:center;padding:60px 20px;color:var(--text-muted);font-size:14px}
+.hidden{display:none!important}
+
+.punch-visual{display:flex;align-items:flex-start;gap:0;flex-wrap:nowrap;overflow-x:auto;padding:4px 0}
+.punch-step{display:flex;flex-direction:column;align-items:center;min-width:80px}
+.punch-circle{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:800;border:3px solid}
+.punch-circle.filled-green{background:var(--green-dim);border-color:var(--green);color:var(--green)}
+.punch-circle.filled-red{background:var(--red-dim);border-color:var(--red);color:var(--red)}
+.punch-circle.filled-yellow{background:var(--yellow-dim);border-color:var(--yellow);color:var(--yellow)}
+.punch-circle.empty-slot{background:transparent;border-color:var(--border);border-style:dashed;color:var(--text-muted)}
+.punch-connector{height:4px;flex:1;min-width:16px;border-radius:2px}
+.punch-connector.ok{background:var(--green-dim)}
+.punch-connector.miss{background:var(--red-dim);background-image:repeating-linear-gradient(90deg,var(--red) 0,var(--red) 6px,transparent 6px,transparent 12px);background-size:12px 4px}
+.punch-connector.neutral{background:var(--border)}
+.punch-time-label{font-family:'Space Mono',monospace;font-size:11px;margin-top:4px;white-space:nowrap}
+.punch-time-label.late{color:var(--red);font-weight:700}
+.punch-time-label.ok{color:var(--green)}
+.punch-time-label.miss{color:var(--red);font-weight:700}
+.punch-name{font-size:10px;color:var(--text-dim);font-weight:600;text-transform:uppercase;letter-spacing:0.3px;margin-top:1px}
+
+.status-pill{display:inline-flex;align-items:center;gap:5px;padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700}
+.status-pill.perfect{background:var(--green-dim);color:var(--green)}
+.status-pill.warning{background:var(--yellow-dim);color:var(--yellow)}
+.status-pill.problem{background:var(--red-dim);color:var(--red)}
+
+.calendar-wrap{margin-top:16px}
+.calendar-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-top:8px}
+.cal-header{font-size:11px;font-weight:700;color:var(--text-dim);text-align:center;padding:6px 0;text-transform:uppercase;letter-spacing:0.5px}
+.cal-day{border-radius:8px;padding:6px 4px;text-align:center;min-height:56px;font-size:11px;border:1px solid transparent;transition:all 0.15s}
+.cal-day.empty{opacity:0}
+.cal-day .day-num{font-weight:700;font-size:12px;font-family:'Space Mono',monospace;margin-bottom:2px}
+.cal-day.has-violation{background:var(--red-dim);border-color:rgba(239,68,68,0.2)}
+.cal-day.has-late{background:var(--yellow-dim);border-color:rgba(234,179,8,0.2)}
+.cal-day.has-both{background:linear-gradient(135deg,var(--red-dim),var(--yellow-dim));border-color:rgba(239,68,68,0.2)}
+.cal-day.clean{background:var(--surface2);border-color:var(--border)}
+.cal-day .cal-dots{display:flex;gap:3px;justify-content:center;margin-top:3px}
+.cal-dot{width:6px;height:6px;border-radius:50%}
+.cal-dot.red{background:var(--red)}.cal-dot.yellow{background:var(--yellow)}.cal-dot.green{background:var(--green)}
+.cal-legend{display:flex;gap:16px;margin-top:10px;flex-wrap:wrap}
+.cal-legend-item{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-dim)}
+.cal-legend-dot{width:10px;height:10px;border-radius:3px}
+
+.day-card{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px 18px;margin-bottom:8px}
+.day-card.has-issue{border-left:4px solid var(--red)}
+.day-card.is-clean{border-left:4px solid var(--green)}
+.day-card-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px}
+.day-card-date{font-weight:700;font-size:14px}
+
+@media(max-width:768px){
+  .header,.dashboard{padding-left:16px;padding-right:16px}
+  .upload-zone{margin:16px}
+  .stat-grid{grid-template-columns:1fr 1fr}
+  .punch-step{min-width:65px}
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-icon">🕐</div>
+  <div>
+    <h1><span>Blufox</span> Lunch Punch Audit</h1>
+    <p>Upload your TimeCards extract to audit lunch punches, tardiness &amp; manager compliance</p>
+  </div>
+</div>
+
+<div class="upload-zone" id="uploadZone">
+  <div class="icon">📂</div>
+  <div class="label">Drop your TimeCards Excel file here</div>
+  <div class="sub">or click to browse — accepts .xlsx / .xls</div>
+  <input type="file" id="fileInput" accept=".xlsx,.xls,.csv">
+  <div id="fileBadge"></div>
+</div>
+
+<div class="dashboard" id="dashboard">
+  <div class="stat-grid" id="statGrid"></div>
+  <div class="filter-bar">
+    <label>Store:</label>
+    <select id="filterStore"><option value="all">All My Stores</option></select>
+    <label>District:</label>
+    <select id="filterDistrict"><option value="all">All Districts</option></select>
+    <label>Search:</label>
+    <input type="text" id="filterName" placeholder="Employee name..." style="width:180px">
+    <button class="btn btn-outline btn-sm" onclick="resetFilters()">Reset</button>
+  </div>
+  <div class="tabs">
+    <button class="tab active" data-tab="store">By Store</button>
+    <button class="tab" data-tab="employee">By Employee</button>
+    <button class="tab" data-tab="manager">Managers</button>
+  </div>
+  <div id="panelStore"></div>
+  <div id="panelEmployee" class="hidden"></div>
+  <div id="panelManager" class="hidden"></div>
+  <div class="export-bar">
+    <button class="btn btn-outline" onclick="doExport('violations')">⬇ Violations CSV</button>
+    <button class="btn btn-outline" onclick="doExport('late')">⬇ Late Arrivals CSV</button>
+    <button class="btn" onclick="doExport('all')">⬇ Export All CSV</button>
+  </div>
+</div>
+
+<script>
+const MY_STORES=['Bourbonnais','Burbank','Cicero','Dekalb','Elkhart','Evanston','Evergreen Park','Frankfort','Glenview','Greeneville','Hammond','Johnson City','Kildeer','Michigan City','Oak Ridge','Round Lake Beach','Schererville','South Bend','South Knoxville','South Skokie','Tinley Park','Uptown','Valparaiso'];
+const DISTRICTS={'Big South':['Greeneville','Johnson City','Oak Ridge','South Knoxville','Uptown'],'Indiana Outlawz':['Elkhart','Michigan City','South Bend','Valparaiso'],'South Side':['Bourbonnais','Burbank','Cicero','Evergreen Park','Frankfort','Tinley Park'],'North Side':['Dekalb','Evanston','Glenview','Hammond','Kildeer','Round Lake Beach','Schererville','South Skokie']};
+const MGR_TITLES=['Store Manager','DM','Ops Coordinator'];
+function getDist(s){for(const[d,st]of Object.entries(DISTRICTS)){if(st.includes(s))return d;}return'Unknown';}
+function esc(s){return s.replace(/'/g,"\\'");}
+
+/*************************************************************
+ * TIMEZONE-SAFE DATE/TIME EXTRACTION
+ *
+ * The critical fix: Excel dates read by SheetJS with cellDates:true
+ * become JS Date objects in LOCAL time. Calling .toISOString() converts
+ * to UTC and shifts the hours. Instead we use LOCAL methods:
+ *   .getFullYear(), .getMonth(), .getDate(),
+ *   .getHours(), .getMinutes(), .getSeconds()
+ *************************************************************/
+function localDateStr(d){
+  // Returns "YYYY-MM-DD" from a JS Date using LOCAL time
+  if(!(d instanceof Date))return String(d).slice(0,10);
+  const y=d.getFullYear();
+  const m=String(d.getMonth()+1).padStart(2,'0');
+  const day=String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
+function localTimeStr(d){
+  // Returns "HH:MM:SS" from a JS Date using LOCAL time (24h)
+  if(!(d instanceof Date)){
+    // string fallback: extract HH:MM:SS from "YYYY-MM-DD HH:MM:SS" or "HH:MM:SS"
+    const s=String(d);
+    const m=s.match(/(\d{2}:\d{2}:\d{2})/);
+    return m?m[1]:'00:00:00';
+  }
+  const h=String(d.getHours()).padStart(2,'0');
+  const m=String(d.getMinutes()).padStart(2,'0');
+  const s=String(d.getSeconds()).padStart(2,'0');
+  return `${h}:${m}:${s}`;
+}
+function localHHMM(d){
+  // Returns "HH:MM" from a JS Date using LOCAL time (24h) for comparison
+  if(!(d instanceof Date)){
+    const s=String(d);
+    const m=s.match(/(\d{2}:\d{2})/);
+    return m?m[1]:'00:00';
+  }
+  const h=String(d.getHours()).padStart(2,'0');
+  const m=String(d.getMinutes()).padStart(2,'0');
+  return `${h}:${m}`;
+}
+
+// 12-hour display from "HH:MM:SS" or "HH:MM" string
+function to12(hhmm){
+  if(!hhmm||hhmm.length<5)return'—';
+  const parts=hhmm.split(':');
+  let h=parseInt(parts[0],10);
+  const m=parts[1];
+  const ampm=h>=12?'PM':'AM';
+  if(h===0)h=12;else if(h>12)h-=12;
+  return `${h}:${m} ${ampm}`;
+}
+function to12Short(hhmm){
+  if(!hhmm||hhmm.length<4)return'';
+  const parts=hhmm.split(':');
+  let h=parseInt(parts[0],10);
+  const m=parts[1];
+  const ampm=h>=12?'p':'a';
+  if(h===0)h=12;else if(h>12)h-=12;
+  return `${h}:${m}${ampm}`;
+}
+
+function dayOfWeekFromStr(ds){return new Date(ds+'T12:00:00').getDay();}
+function dayFull(ds){return['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][dayOfWeekFromStr(ds)];}
+function formatDateNice(ds){const d=new Date(ds+'T12:00:00');const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];return`${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;}
+
+// ===== DATA =====
+let dayRecords=[];
+let drill=null;
+
+function parseExcel(data){
+  const wb=XLSX.read(data,{type:'array',cellDates:true});
+  let sn=wb.SheetNames.find(s=>s.toLowerCase().includes('punch'))||wb.SheetNames[0];
+  const ws=wb.Sheets[sn];
+  const rows=XLSX.utils.sheet_to_json(ws,{defval:'',raw:false});
+
+  if(!rows.length){alert('No data found');return;}
+  const H=Object.keys(rows[0]);
+  const cS=H.find(h=>/^store$/i.test(h.trim()))||H[0];
+  const cN=H.find(h=>/^name$/i.test(h.trim()))||H[2];
+  const cE=H.find(h=>/employee.?id/i.test(h.trim()))||H[3];
+  const cD=H.find(h=>/^date$/i.test(h.trim()))||H[4];
+  const cT=H.find(h=>/^title$/i.test(h.trim()))||H[5];
+  const cP=H.find(h=>/punch.?time/i.test(h.trim()))||H[6];
+
+  // With raw:false + cellDates:true, SheetJS returns formatted strings
+  // Date column formatted as "mm/dd/yyyy" => "03/02/2026"
+  // Punch column formatted as "h:mm AM/PM" => "8:31 AM"
+  // But we need to handle both: if it's a Date object, use local extraction.
+  // If it's a string, parse it.
+
+  // Actually let's re-read with raw values to get Date objects and extract locally.
+  const rows2=XLSX.utils.sheet_to_json(ws,{defval:'',raw:true});
+  // With raw:true + cellDates:true, Date cells come as JS Date objects
+
+  const grouped={};
+  rows2.forEach(r=>{
+    const store=(r[cS]||'').toString().trim();
+    if(!MY_STORES.includes(store))return;
+
+    const dateRaw=r[cD];
+    const punchRaw=r[cP];
+
+    // Extract DATE string (YYYY-MM-DD) using LOCAL time
+    const dateStr=localDateStr(dateRaw);
+
+    // Extract TIME string (HH:MM:SS) using LOCAL time from punch column
+    const timeHHMMSS=localTimeStr(punchRaw);
+    const timeHHMM=timeHHMMSS.slice(0,5);
+
+    const k=`${store}||${(r[cE]||'')}||${dateStr}`;
+    if(!grouped[k])grouped[k]={
+      store,
+      name:(r[cN]||'').toString().trim(),
+      empId:(r[cE]||'').toString().trim(),
+      title:(r[cT]||'').toString().trim(),
+      date:dateStr,
+      punches:[] // array of "HH:MM:SS" strings
+    };
+    grouped[k].punches.push(timeHHMMSS);
+  });
+
+  dayRecords=Object.values(grouped).map(d=>{
+    d.punches.sort(); // sorts correctly since format is HH:MM:SS
+    d.cnt=d.punches.length;
+    d.isMgr=MGR_TITLES.includes(d.title);
+    d.noLunch=d.cnt<4&&d.cnt>=1;
+    d.dayNum=dayOfWeekFromStr(d.date);
+    d.district=getDist(d.store);
+
+    const ft=d.punches[0]?d.punches[0].slice(0,5):''; // HH:MM of first punch
+    d.firstTime=ft;
+    const fh=parseInt(ft.split(':')[0],10);
+    d.shift=fh<11?'opener':'closer';
+
+    d.isLate=false; d.lateReason=''; d.lateDetail='';
+    if(d.isMgr){
+      let cut=d.dayNum===1?'09:00':d.dayNum===2?'08:30':'09:40';
+      d.mgrCutoff=cut;
+      if(ft>cut){d.isLate=true;d.lateReason='LATE';d.lateDetail=`Clocked in ${to12Short(ft)}, should be in by ${to12Short(cut)}`;}
+    }else{
+      if(d.shift==='opener'&&ft>'09:40'){d.isLate=true;d.lateReason='LATE';d.lateDetail=`Clocked in ${to12Short(ft)}, opener due by ${to12Short('09:40')}`;}
+      else if(d.shift==='closer'&&ft>'12:10'){d.isLate=true;d.lateReason='LATE';d.lateDetail=`Clocked in ${to12Short(ft)}, closer due by ${to12Short('12:10')}`;}
+    }
+    return d;
+  });
+  buildDashboard();
+}
+
+// ===== FILE HANDLING =====
+const uz=document.getElementById('uploadZone'),fi=document.getElementById('fileInput');
+uz.addEventListener('click',()=>fi.click());
+uz.addEventListener('dragover',e=>{e.preventDefault();uz.classList.add('dragover');});
+uz.addEventListener('dragleave',()=>uz.classList.remove('dragover'));
+uz.addEventListener('drop',e=>{e.preventDefault();uz.classList.remove('dragover');if(e.dataTransfer.files.length)hf(e.dataTransfer.files[0]);});
+fi.addEventListener('change',e=>{if(e.target.files.length)hf(e.target.files[0]);});
+function hf(f){document.getElementById('fileBadge').innerHTML=`<div class="file-badge">✔ ${f.name} (${(f.size/1024).toFixed(0)} KB)</div>`;const r=new FileReader();r.onload=e=>parseExcel(e.target.result);r.readAsArrayBuffer(f);}
+
+function buildDashboard(){
+  document.getElementById('dashboard').classList.add('active');
+  const ss=document.getElementById('filterStore');ss.innerHTML='<option value="all">All My Stores</option>';
+  [...new Set(dayRecords.map(d=>d.store))].sort().forEach(s=>{ss.innerHTML+=`<option value="${s}">${s}</option>`;});
+  const ds=document.getElementById('filterDistrict');ds.innerHTML='<option value="all">All Districts</option>';
+  Object.keys(DISTRICTS).sort().forEach(d=>{ds.innerHTML+=`<option value="${d}">${d}</option>`;});
+  document.getElementById('filterStore').onchange=()=>{drill=null;renderAll();};
+  document.getElementById('filterDistrict').onchange=()=>{drill=null;renderAll();};
+  document.getElementById('filterName').oninput=()=>{drill=null;renderAll();};
+  drill=null;renderAll();
+}
+
+function filt(mo){
+  let d=[...dayRecords];
+  const sv=document.getElementById('filterStore').value;
+  const dv=document.getElementById('filterDistrict').value;
+  const nv=document.getElementById('filterName').value.toLowerCase().trim();
+  if(sv!=='all')d=d.filter(x=>x.store===sv);
+  if(dv!=='all')d=d.filter(x=>DISTRICTS[dv]?.includes(x.store));
+  if(nv)d=d.filter(x=>x.name.toLowerCase().includes(nv));
+  if(mo)d=d.filter(x=>x.isMgr);
+  return d;
+}
+
+function renderAll(){renderStats();renderStoreTab();renderEmpTab();renderMgrTab();}
+
+function renderStats(){
+  const a=filt(),v=a.filter(d=>d.noLunch),lt=a.filter(d=>d.isLate),ma=a.filter(d=>d.isMgr),ml=ma.filter(d=>d.isLate);
+  const cr=a.length?((1-v.length/a.length)*100).toFixed(1):0;
+  document.getElementById('statGrid').innerHTML=`
+    <div class="stat-card red"><div class="stat-label">Missed Lunch Punches</div><div class="stat-value">${v.length.toLocaleString()}</div><div class="stat-sub">days with &lt; 4 punches</div></div>
+    <div class="stat-card orange"><div class="stat-label">Late Clock-Ins</div><div class="stat-value">${lt.length.toLocaleString()}</div><div class="stat-sub">all employees combined</div></div>
+    <div class="stat-card green"><div class="stat-label">Lunch Compliance</div><div class="stat-value">${cr}%</div><div class="stat-sub">${a.length.toLocaleString()} total work days</div></div>
+    <div class="stat-card blue"><div class="stat-label">Mgr Late Arrivals</div><div class="stat-value">${ml.length}</div><div class="stat-sub">${ma.length} total manager days</div></div>
+    <div class="stat-card yellow"><div class="stat-label">2-Punch Days (No Lunch)</div><div class="stat-value">${v.filter(d=>d.cnt===2).length}</div><div class="stat-sub">most common violation</div></div>`;
+}
+
+// ===== VISUAL PUNCH TIMELINE =====
+function punchVis(d){
+  const labels=['🟢 Clock In','🔴 Lunch Out','🟢 Lunch Back','🔴 Clock Out'];
+  const p=d.punches; // array of "HH:MM:SS" strings
+  let html='<div class="punch-visual">';
+  for(let i=0;i<4;i++){
+    if(i>0){
+      const hasBoth=!!p[i-1]&&!!p[i];
+      const connCls=hasBoth?'ok':(p[i]?'neutral':'miss');
+      html+=`<div class="punch-connector ${connCls}" style="margin-top:10px"></div>`;
+    }
+    const hasPunch=!!p[i];
+    let circCls,icon;
+    if(hasPunch){
+      const isLateHere=i===0&&d.isLate;
+      circCls=isLateHere?'filled-yellow':'filled-green';
+      icon=isLateHere?'⚠':'✓';
+    }else{
+      circCls='empty-slot';icon='✗';
+    }
+    // Display time in 12-hour format
+    const timeLabel=hasPunch?to12(p[i].slice(0,5)):'MISSED';
+    const timeCls=!hasPunch?'miss':(i===0&&d.isLate?'late':'ok');
+    html+=`<div class="punch-step">
+      <div class="punch-circle ${circCls}">${icon}</div>
+      <div class="punch-time-label ${timeCls}">${timeLabel}</div>
+      <div class="punch-name">${labels[i]}</div>
+    </div>`;
+  }
+  html+='</div>';
+  return html;
+}
+
+function statusPill(d){
+  const issues=[];
+  if(d.noLunch)issues.push('❌ No Lunch Punch');
+  if(d.isLate)issues.push('⚠️ '+d.lateDetail);
+  if(!issues.length)return'<span class="status-pill perfect">✅ All Good</span>';
+  const cls=d.noLunch?'problem':'warning';
+  return issues.map(i=>`<span class="status-pill ${cls}">${i}</span>`).join(' ');
+}
+
+// ===== STORE TAB =====
+function renderStoreTab(){
+  if(drill?.tab==='store'&&drill.type==='storeEmps')return renderStoreEmps(drill.store);
+  if(drill?.tab==='store'&&drill.type==='empDays')return renderEmpDays('panelStore',drill);
+  const a=filt().filter(d=>!d.isMgr),ss={};
+  a.forEach(d=>{if(!ss[d.store])ss[d.store]={t:0,v:0,l:0,e:new Set()};ss[d.store].t++;});
+  a.filter(d=>d.noLunch).forEach(d=>{ss[d.store].v++;ss[d.store].e.add(d.empId);});
+  a.filter(d=>d.isLate).forEach(d=>{ss[d.store].l++;});
+  const sorted=Object.entries(ss).sort((a,b)=>b[1].v-a[1].v);
+  const mx=Math.max(...sorted.map(s=>s[1].v),1);
+  let h=`<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th>Store</th><th>District</th><th>Lunch Violations</th><th>Late Clock-Ins</th><th>Total Days</th><th>Violators</th><th>Rate</th><th></th></tr></thead><tbody>`;
+  sorted.forEach(([st,s])=>{
+    const r=s.t?((s.v/s.t)*100).toFixed(1):0;
+    const bc=r>60?'badge-red':r>30?'badge-yellow':'badge-green';
+    const bC=r>60?'var(--red)':r>30?'var(--yellow)':'var(--green)';
+    h+=`<tr><td><span class="clickable" onclick="drill={tab:'store',type:'storeEmps',store:'${esc(st)}'};renderStoreTab()" style="font-weight:700">${st}</span></td>
+    <td style="color:var(--text-dim);font-size:12px">${getDist(st)}</td>
+    <td><span class="badge badge-red">${s.v}</span></td><td><span class="badge badge-orange">${s.l}</span></td>
+    <td>${s.t}</td><td>${s.e.size}</td><td><span class="badge ${bc}">${r}%</span></td>
+    <td style="width:100px"><div class="store-bar"><div class="store-bar-fill" style="width:${(s.v/mx*100).toFixed(0)}%;background:${bC}"></div></div></td></tr>`;
+  });
+  h+='</tbody></table></div></div>';
+  document.getElementById('panelStore').innerHTML=h;
+}
+
+function renderStoreEmps(store){
+  const a=filt().filter(d=>d.store===store&&!d.isMgr),em={};
+  a.forEach(d=>{if(!em[d.empId])em[d.empId]={name:d.name,empId:d.empId,title:d.title,t:0,v:0,l:0};em[d.empId].t++;if(d.noLunch)em[d.empId].v++;if(d.isLate)em[d.empId].l++;});
+  const sorted=Object.values(em).sort((a,b)=>b.v-a.v);
+  let h=`<div class="breadcrumb"><a onclick="drill=null;renderStoreTab()">⬅ All Stores</a><span>›</span><span class="current">${store} — ${getDist(store)}</span></div>`;
+  h+=`<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th>Employee</th><th>ID</th><th>Title</th><th>Lunch Violations</th><th>Late Days</th><th>Total Days</th><th>Rate</th></tr></thead><tbody>`;
+  sorted.forEach(e=>{
+    const r=e.t?((e.v/e.t)*100).toFixed(1):0;
+    const bc=r>60?'badge-red':r>30?'badge-yellow':'badge-green';
+    h+=`<tr><td><span class="clickable" onclick="drill={tab:'store',type:'empDays',empId:'${esc(e.empId)}',name:'${esc(e.name)}',store:'${esc(store)}'};renderStoreTab()" style="font-weight:700">${e.name}</span></td>
+    <td style="font-family:'Space Mono',monospace;font-size:12px;color:var(--text-dim)">${e.empId}</td>
+    <td style="font-size:12px;color:var(--text-dim)">${e.title}</td>
+    <td><span class="badge badge-red">${e.v}</span></td>
+    <td>${e.l?`<span class="badge badge-orange">${e.l}</span>`:'<span style="color:var(--text-muted)">0</span>'}</td>
+    <td>${e.t}</td><td><span class="badge ${bc}">${r}%</span></td></tr>`;
+  });
+  h+='</tbody></table></div></div>';
+  document.getElementById('panelStore').innerHTML=h;
+}
+
+// ===== EMPLOYEE TAB =====
+function renderEmpTab(){
+  if(drill?.tab==='emp'&&drill.type==='empDays')return renderEmpDays('panelEmployee',drill);
+  const a=filt().filter(d=>!d.isMgr),em={};
+  a.forEach(d=>{if(!em[d.empId])em[d.empId]={name:d.name,empId:d.empId,store:d.store,district:d.district,title:d.title,t:0,v:0,l:0};em[d.empId].t++;if(d.noLunch)em[d.empId].v++;if(d.isLate)em[d.empId].l++;});
+  const sorted=Object.values(em).sort((a,b)=>b.v-a.v);
+  let h=`<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th>Employee</th><th>ID</th><th>Store</th><th>District</th><th>Lunch Violations</th><th>Late Days</th><th>Total Days</th><th>Rate</th></tr></thead><tbody>`;
+  if(!sorted.length)h+=`<tr><td colspan="8" class="no-data">No data</td></tr>`;
+  sorted.forEach(e=>{
+    const r=e.t?((e.v/e.t)*100).toFixed(1):0;
+    const bc=r>60?'badge-red':r>30?'badge-yellow':'badge-green';
+    h+=`<tr><td><span class="clickable" onclick="drill={tab:'emp',type:'empDays',empId:'${esc(e.empId)}',name:'${esc(e.name)}',store:'${esc(e.store)}'};renderEmpTab()" style="font-weight:700">${e.name}</span></td>
+    <td style="font-family:'Space Mono',monospace;font-size:12px;color:var(--text-dim)">${e.empId}</td>
+    <td>${e.store}</td><td style="font-size:12px;color:var(--text-dim)">${e.district}</td>
+    <td><span class="badge badge-red">${e.v}</span></td>
+    <td>${e.l?`<span class="badge badge-orange">${e.l}</span>`:'<span style="color:var(--text-muted)">0</span>'}</td>
+    <td>${e.t}</td><td><span class="badge ${bc}">${r}%</span></td></tr>`;
+  });
+  h+='</tbody></table></div></div>';
+  document.getElementById('panelEmployee').innerHTML=h;
+}
+
+// ===== SHARED EMPLOYEE DRILLDOWN =====
+function renderEmpDays(panel,dd){
+  const all=filt(dd.tab==='mgr').filter(d=>d.empId===dd.empId).sort((a,b)=>a.date<b.date?1:-1);
+  if(!all.length){document.getElementById(panel).innerHTML='<div class="no-data">No data</div>';return;}
+
+  let h='<div class="breadcrumb">';
+  if(dd.tab==='store'){
+    h+=`<a onclick="drill=null;renderStoreTab()">⬅ All Stores</a><span>›</span><a onclick="drill={tab:'store',type:'storeEmps',store:'${esc(dd.store)}'};renderStoreTab()">${dd.store}</a><span>›</span>`;
+  }else if(dd.tab==='emp'){
+    h+=`<a onclick="drill=null;renderEmpTab()">⬅ All Employees</a><span>›</span>`;
+  }else{
+    h+=`<a onclick="drill=null;renderMgrTab()">⬅ All Managers</a><span>›</span>`;
+  }
+  h+=`<span class="current">${dd.name} — ${all[0].store} (${all[0].title})</span></div>`;
+
+  const totalD=all.length,vD=all.filter(d=>d.noLunch).length,lD=all.filter(d=>d.isLate).length;
+  h+=`<div style="display:flex;gap:12px;flex-wrap:wrap;margin:12px 0">
+    <span class="status-pill ${vD===0?'perfect':'problem'}">${vD===0?'✅ No Lunch Violations':'❌ '+vD+' Lunch Violation'+(vD>1?'s':'')}</span>
+    <span class="status-pill ${lD===0?'perfect':'warning'}">${lD===0?'✅ No Late Days':'⚠️ '+lD+' Late Day'+(lD>1?'s':'')}</span>
+    <span style="color:var(--text-dim);font-size:12px;display:flex;align-items:center">${totalD} total work days</span>
+  </div>`;
+
+  h+=buildCal(all);
+
+  h+=`<div style="margin-top:20px">`;
+  all.forEach(d=>{
+    const hasIssue=d.noLunch||d.isLate;
+    h+=`<div class="day-card ${hasIssue?'has-issue':'is-clean'}">
+      <div class="day-card-header">
+        <div>
+          <span class="day-card-date">${dayFull(d.date)}, ${formatDateNice(d.date)}</span>
+          <span class="badge ${d.shift==='opener'?'badge-blue':'badge-purple'}" style="margin-left:8px">${d.shift==='opener'?'☀️ Opener':'🌙 Closer'}</span>
+        </div>
+        <div>${statusPill(d)}</div>
+      </div>
+      ${punchVis(d)}
+    </div>`;
+  });
+  h+=`</div>`;
+  document.getElementById(panel).innerHTML=h;
+}
+
+// ===== MANAGER TAB =====
+function renderMgrTab(){
+  if(drill?.tab==='mgr'&&drill.type==='empDays')return renderEmpDays('panelManager',drill);
+  const mgrs=filt(true),mm={};
+  mgrs.forEach(d=>{
+    if(!mm[d.empId])mm[d.empId]={name:d.name,empId:d.empId,store:d.store,district:d.district,title:d.title,t:0,v:0,l:0,ml:0,tl:0,ol:0};
+    const m=mm[d.empId];m.t++;if(d.noLunch)m.v++;
+    if(d.isLate){m.l++;if(d.dayNum===1)m.ml++;else if(d.dayNum===2)m.tl++;else m.ol++;}
+  });
+  const sorted=Object.values(mm).sort((a,b)=>b.l-a.l);
+  let h=`<div class="detail-panel"><div style="font-size:13px;color:var(--text-dim)">
+    <strong style="color:var(--text)">⏰ Manager Arrival Rules:</strong>&nbsp;
+    Monday: by <span class="badge badge-blue">${to12Short('09:00')}</span> &nbsp;|&nbsp;
+    Tuesday: by <span class="badge badge-blue">${to12Short('08:30')}</span> &nbsp;|&nbsp;
+    Other days: by <span class="badge badge-blue">${to12Short('09:40')}</span>
+  </div></div>`;
+  h+=`<div class="table-wrap"><div class="table-scroll"><table><thead><tr>
+    <th>Manager</th><th>ID</th><th>Store</th><th>District</th><th>Title</th><th>Late Days</th><th>Mon Late</th><th>Tue Late</th><th>Other Late</th><th>No Lunch</th><th>Total Days</th>
+  </tr></thead><tbody>`;
+  if(!sorted.length)h+=`<tr><td colspan="11" class="no-data">No managers found</td></tr>`;
+  sorted.forEach(e=>{
+    h+=`<tr><td><span class="clickable" onclick="drill={tab:'mgr',type:'empDays',empId:'${esc(e.empId)}',name:'${esc(e.name)}',store:'${esc(e.store)}'};renderMgrTab()" style="font-weight:700">${e.name}</span></td>
+    <td style="font-family:'Space Mono',monospace;font-size:12px;color:var(--text-dim)">${e.empId}</td>
+    <td>${e.store}</td><td style="font-size:12px;color:var(--text-dim)">${e.district}</td>
+    <td style="font-size:12px;color:var(--text-dim)">${e.title}</td>
+    <td>${e.l?`<span class="badge badge-red">${e.l}</span>`:'<span style="color:var(--green)">0</span>'}</td>
+    <td>${e.ml?`<span class="badge badge-orange">${e.ml}</span>`:'<span style="color:var(--text-muted)">0</span>'}</td>
+    <td>${e.tl?`<span class="badge badge-orange">${e.tl}</span>`:'<span style="color:var(--text-muted)">0</span>'}</td>
+    <td>${e.ol?`<span class="badge badge-orange">${e.ol}</span>`:'<span style="color:var(--text-muted)">0</span>'}</td>
+    <td>${e.v?`<span class="badge badge-yellow">${e.v}</span>`:'<span style="color:var(--text-muted)">0</span>'}</td>
+    <td>${e.t}</td></tr>`;
+  });
+  h+='</tbody></table></div></div>';
+  document.getElementById('panelManager').innerHTML=h;
+}
+
+// ===== CALENDAR =====
+function buildCal(empDays){
+  if(!empDays.length)return'';
+  const dates=empDays.map(d=>d.date).sort();
+  const first=new Date(dates[0]+'T12:00:00'),last=new Date(dates[dates.length-1]+'T12:00:00');
+  const lookup={};empDays.forEach(d=>{lookup[d.date]=d;});
+  let h=`<div class="calendar-wrap"><div class="cal-legend">
+    <div class="cal-legend-item"><div class="cal-legend-dot" style="background:var(--red)"></div> Missed Lunch</div>
+    <div class="cal-legend-item"><div class="cal-legend-dot" style="background:var(--yellow)"></div> Late Arrival</div>
+    <div class="cal-legend-item"><div class="cal-legend-dot" style="background:var(--green)"></div> Clean Day</div>
+    <div class="cal-legend-item"><div class="cal-legend-dot" style="background:var(--surface2);border:1px solid var(--border)"></div> No Shift</div>
+  </div>`;
+  let cur=new Date(first.getFullYear(),first.getMonth(),1);
+  const end=new Date(last.getFullYear(),last.getMonth(),1);
+  while(cur<=end){
+    const yr=cur.getFullYear(),mo=cur.getMonth();
+    const mn=cur.toLocaleString('default',{month:'long',year:'numeric'});
+    const dim=new Date(yr,mo+1,0).getDate(),fd=new Date(yr,mo,1).getDay();
+    h+=`<div style="margin-top:16px"><div style="font-weight:700;font-size:14px;margin-bottom:6px">${mn}</div><div class="calendar-grid">`;
+    ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].forEach(d=>{h+=`<div class="cal-header">${d}</div>`;});
+    for(let i=0;i<fd;i++)h+=`<div class="cal-day empty"></div>`;
+    for(let day=1;day<=dim;day++){
+      const ds=`${yr}-${String(mo+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+      const rec=lookup[ds];let cls='cal-day',dots='';
+      if(rec){
+        if(rec.noLunch&&rec.isLate)cls+=' has-both';
+        else if(rec.noLunch)cls+=' has-violation';
+        else if(rec.isLate)cls+=' has-late';
+        else cls+=' clean';
+        if(rec.noLunch)dots+=`<div class="cal-dot red"></div>`;
+        if(rec.isLate)dots+=`<div class="cal-dot yellow"></div>`;
+        if(!rec.noLunch&&!rec.isLate)dots+=`<div class="cal-dot green"></div>`;
+      }
+      const tip=rec?`title="${dayFull(ds)}: ${rec.cnt} punches, In: ${to12Short(rec.firstTime)}${rec.isLate?' ⚠ LATE':''}${rec.noLunch?' ⚠ NO LUNCH':''}"`:'';
+      h+=`<div class="${cls}" ${tip}><div class="day-num">${day}</div>${dots?`<div class="cal-dots">${dots}</div>`:''}</div>`;
+    }
+    h+=`</div></div>`;
+    cur=new Date(yr,mo+1,1);
+  }
+  h+=`</div>`;return h;
+}
+
+// ===== TABS =====
+document.querySelectorAll('.tab').forEach(tab=>{
+  tab.addEventListener('click',()=>{
+    document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+    tab.classList.add('active');
+    const t=tab.dataset.tab;drill=null;
+    document.getElementById('panelStore').classList.toggle('hidden',t!=='store');
+    document.getElementById('panelEmployee').classList.toggle('hidden',t!=='employee');
+    document.getElementById('panelManager').classList.toggle('hidden',t!=='manager');
+    renderAll();
+  });
+});
+function resetFilters(){document.getElementById('filterStore').value='all';document.getElementById('filterDistrict').value='all';document.getElementById('filterName').value='';drill=null;renderAll();}
+
+// ===== EXPORT =====
+function doExport(type){
+  const a=filt();let rows;
+  if(type==='violations')rows=a.filter(d=>d.noLunch);
+  else if(type==='late')rows=a.filter(d=>d.isLate);
+  else rows=a;
+  if(!rows.length){alert('No data to export.');return;}
+  let csv='Store,District,Employee,Employee ID,Title,Date,Day,Shift,Clock In,Punch 2,Punch 3,Clock Out,Total Punches,No Lunch,Is Late,Late Detail\n';
+  rows.forEach(d=>{
+    const p=d.punches;
+    csv+=`"${d.store}","${d.district}","${d.name}","${d.empId}","${d.title}","${d.date}","${dayFull(d.date)}","${d.shift}","${to12(p[0]?.slice(0,5))||''}","${to12(p[1]?.slice(0,5))||''}","${to12(p[2]?.slice(0,5))||''}","${to12(p[3]?.slice(0,5))||''}",${d.cnt},${d.noLunch},${d.isLate},"${d.lateDetail}"\n`;
+  });
+  const b=new Blob([csv],{type:'text/csv'});const u=URL.createObjectURL(b);
+  const a2=document.createElement('a');a2.href=u;a2.download=`blufox_${type}_${new Date().toISOString().slice(0,10)}.csv`;a2.click();URL.revokeObjectURL(u);
+}
+</script>
+</body>
+</html>
