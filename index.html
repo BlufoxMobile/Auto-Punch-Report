@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Blufox Lunch Punch Audit</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<!-- xlsx-js-style is a drop-in fork of SheetJS that preserves the .s style property
+     on cells, so cell fills/fonts survive writeFile. Same XLSX global, same API. -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <style>
 :root{--bg:#0c0f14;--surface:#151921;--surface2:#1c2230;--surface3:#232a3a;--border:#2a3142;--accent:#f97316;--accent-dim:rgba(249,115,22,0.15);--green:#22c55e;--green-dim:rgba(34,197,94,0.15);--red:#ef4444;--red-dim:rgba(239,68,68,0.12);--yellow:#eab308;--yellow-dim:rgba(234,179,8,0.12);--blue:#3b82f6;--blue-dim:rgba(59,130,246,0.12);--purple:#a855f7;--purple-dim:rgba(168,85,247,0.12);--text:#e8ecf4;--text-dim:#8892a5;--text-muted:#5a6478}
@@ -71,7 +73,9 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
 .breadcrumb span{color:var(--text-muted)}
 .breadcrumb .current{color:var(--text);font-weight:600}
 .detail-panel{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 18px;margin-top:12px}
-.export-bar{display:flex;gap:10px;margin-top:20px;justify-content:flex-end;flex-wrap:wrap}
+.export-bar{display:flex;gap:10px;margin-top:20px;justify-content:flex-end;flex-wrap:wrap;align-items:center}
+.export-bar-secondary{margin-top:8px;opacity:0.85}
+.export-hint{font-size:11px;color:var(--text-muted);margin-right:4px}
 .no-data{text-align:center;padding:60px 20px;color:var(--text-muted);font-size:14px}
 .hidden{display:none!important}
 
@@ -165,10 +169,20 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
   <div id="panelStore"></div>
   <div id="panelEmployee" class="hidden"></div>
   <div id="panelManager" class="hidden"></div>
+
+  <!-- Primary: Excel exports with highlighting -->
   <div class="export-bar">
-    <button class="btn btn-outline" onclick="doExport('violations')">⬇ Violations CSV</button>
-    <button class="btn btn-outline" onclick="doExport('late')">⬇ Late Arrivals CSV</button>
-    <button class="btn" onclick="doExport('all')">⬇ Export All CSV</button>
+    <span class="export-hint">🎨 Highlighted Excel:</span>
+    <button class="btn btn-outline" onclick="doExportXLSX('violations')">⬇ Missed Lunches</button>
+    <button class="btn btn-outline" onclick="doExportXLSX('late')">⬇ Late Arrivals</button>
+    <button class="btn" onclick="doExportXLSX('all')">⬇ Export All (Highlighted)</button>
+  </div>
+  <!-- Secondary: Plain CSV (no formatting, but small & universal) -->
+  <div class="export-bar export-bar-secondary">
+    <span class="export-hint">Plain CSV:</span>
+    <button class="btn btn-outline btn-sm" onclick="doExport('violations')">Violations CSV</button>
+    <button class="btn btn-outline btn-sm" onclick="doExport('late')">Late CSV</button>
+    <button class="btn btn-outline btn-sm" onclick="doExport('all')">All CSV</button>
   </div>
 </div>
 
@@ -181,15 +195,8 @@ function esc(s){return s.replace(/'/g,"\\'");}
 
 /*************************************************************
  * TIMEZONE-SAFE DATE/TIME EXTRACTION
- *
- * The critical fix: Excel dates read by SheetJS with cellDates:true
- * become JS Date objects in LOCAL time. Calling .toISOString() converts
- * to UTC and shifts the hours. Instead we use LOCAL methods:
- *   .getFullYear(), .getMonth(), .getDate(),
- *   .getHours(), .getMinutes(), .getSeconds()
  *************************************************************/
 function localDateStr(d){
-  // Returns "YYYY-MM-DD" from a JS Date using LOCAL time
   if(!(d instanceof Date))return String(d).slice(0,10);
   const y=d.getFullYear();
   const m=String(d.getMonth()+1).padStart(2,'0');
@@ -197,9 +204,7 @@ function localDateStr(d){
   return `${y}-${m}-${day}`;
 }
 function localTimeStr(d){
-  // Returns "HH:MM:SS" from a JS Date using LOCAL time (24h)
   if(!(d instanceof Date)){
-    // string fallback: extract HH:MM:SS from "YYYY-MM-DD HH:MM:SS" or "HH:MM:SS"
     const s=String(d);
     const m=s.match(/(\d{2}:\d{2}:\d{2})/);
     return m?m[1]:'00:00:00';
@@ -210,7 +215,6 @@ function localTimeStr(d){
   return `${h}:${m}:${s}`;
 }
 function localHHMM(d){
-  // Returns "HH:MM" from a JS Date using LOCAL time (24h) for comparison
   if(!(d instanceof Date)){
     const s=String(d);
     const m=s.match(/(\d{2}:\d{2})/);
@@ -221,7 +225,6 @@ function localHHMM(d){
   return `${h}:${m}`;
 }
 
-// 12-hour display from "HH:MM:SS" or "HH:MM" string
 function to12(hhmm){
   if(!hhmm||hhmm.length<5)return'—';
   const parts=hhmm.split(':');
@@ -264,15 +267,7 @@ function parseExcel(data){
   const cT=H.find(h=>/^title$/i.test(h.trim()))||H[5];
   const cP=H.find(h=>/punch.?time/i.test(h.trim()))||H[6];
 
-  // With raw:false + cellDates:true, SheetJS returns formatted strings
-  // Date column formatted as "mm/dd/yyyy" => "03/02/2026"
-  // Punch column formatted as "h:mm AM/PM" => "8:31 AM"
-  // But we need to handle both: if it's a Date object, use local extraction.
-  // If it's a string, parse it.
-
-  // Actually let's re-read with raw values to get Date objects and extract locally.
   const rows2=XLSX.utils.sheet_to_json(ws,{defval:'',raw:true});
-  // With raw:true + cellDates:true, Date cells come as JS Date objects
 
   const grouped={};
   rows2.forEach(r=>{
@@ -282,12 +277,8 @@ function parseExcel(data){
     const dateRaw=r[cD];
     const punchRaw=r[cP];
 
-    // Extract DATE string (YYYY-MM-DD) using LOCAL time
     const dateStr=localDateStr(dateRaw);
-
-    // Extract TIME string (HH:MM:SS) using LOCAL time from punch column
     const timeHHMMSS=localTimeStr(punchRaw);
-    const timeHHMM=timeHHMMSS.slice(0,5);
 
     const k=`${store}||${(r[cE]||'')}||${dateStr}`;
     if(!grouped[k])grouped[k]={
@@ -296,20 +287,20 @@ function parseExcel(data){
       empId:(r[cE]||'').toString().trim(),
       title:(r[cT]||'').toString().trim(),
       date:dateStr,
-      punches:[] // array of "HH:MM:SS" strings
+      punches:[]
     };
     grouped[k].punches.push(timeHHMMSS);
   });
 
   dayRecords=Object.values(grouped).map(d=>{
-    d.punches.sort(); // sorts correctly since format is HH:MM:SS
+    d.punches.sort();
     d.cnt=d.punches.length;
     d.isMgr=MGR_TITLES.includes(d.title);
     d.noLunch=d.cnt<4&&d.cnt>=1;
     d.dayNum=dayOfWeekFromStr(d.date);
     d.district=getDist(d.store);
 
-    const ft=d.punches[0]?d.punches[0].slice(0,5):''; // HH:MM of first punch
+    const ft=d.punches[0]?d.punches[0].slice(0,5):'';
     d.firstTime=ft;
     const fh=parseInt(ft.split(':')[0],10);
     d.shift=fh<11?'opener':'closer';
@@ -377,7 +368,7 @@ function renderStats(){
 // ===== VISUAL PUNCH TIMELINE =====
 function punchVis(d){
   const labels=['🟢 Clock In','🔴 Lunch Out','🟢 Lunch Back','🔴 Clock Out'];
-  const p=d.punches; // array of "HH:MM:SS" strings
+  const p=d.punches;
   let html='<div class="punch-visual">';
   for(let i=0;i<4;i++){
     if(i>0){
@@ -394,7 +385,6 @@ function punchVis(d){
     }else{
       circCls='empty-slot';icon='✗';
     }
-    // Display time in 12-hour format
     const timeLabel=hasPunch?to12(p[i].slice(0,5)):'MISSED';
     const timeCls=!hasPunch?'miss':(i===0&&d.isLate?'late':'ok');
     html+=`<div class="punch-step">
@@ -617,20 +607,269 @@ document.querySelectorAll('.tab').forEach(tab=>{
 });
 function resetFilters(){document.getElementById('filterStore').value='all';document.getElementById('filterDistrict').value='all';document.getElementById('filterName').value='';drill=null;renderAll();}
 
-// ===== EXPORT =====
-function doExport(type){
-  const a=filt();let rows;
+/*************************************************************
+ * EXPORT — SHARED ROW BUILDING
+ *************************************************************/
+const EXPORT_HEADERS = ['Store','District','Employee','Employee ID','Title','Date','Day','Shift','Clock In','Punch 2','Punch 3','Clock Out','Total Punches','No Lunch','Is Late','Late Detail'];
+
+function buildRows(type){
+  const a=filt();
+  let rows;
   if(type==='violations')rows=a.filter(d=>d.noLunch);
   else if(type==='late')rows=a.filter(d=>d.isLate);
   else rows=a;
+  // Stable sort: store, then date, then employee name
+  rows.sort((x,y)=>{
+    if(x.store!==y.store)return x.store<y.store?-1:1;
+    if(x.date!==y.date)return x.date<y.date?-1:1;
+    return x.name<y.name?-1:1;
+  });
+  return rows;
+}
+
+/*************************************************************
+ * PLAIN CSV EXPORT — now works reliably cross-browser
+ *
+ * Fixes applied vs. the old broken version:
+ *   1. The <a> element is appended to document.body BEFORE .click() —
+ *      Firefox and Safari silently no-op if the link isn't in the DOM.
+ *   2. URL.revokeObjectURL(...) is deferred 1s so the browser has
+ *      time to actually start the download before the blob is freed.
+ *   3. A UTF-8 BOM is prepended so Excel opens special chars correctly.
+ *   4. Commas inside the "Late Detail" field are now quoted/escaped.
+ *************************************************************/
+function csvEscape(v){
+  const s=String(v==null?'':v);
+  if(/[",\n]/.test(s)) return '"'+s.replace(/"/g,'""')+'"';
+  return s;
+}
+
+function doExport(type){
+  const rows=buildRows(type);
   if(!rows.length){alert('No data to export.');return;}
-  let csv='Store,District,Employee,Employee ID,Title,Date,Day,Shift,Clock In,Punch 2,Punch 3,Clock Out,Total Punches,No Lunch,Is Late,Late Detail\n';
+  const lines=[EXPORT_HEADERS.join(',')];
   rows.forEach(d=>{
     const p=d.punches;
-    csv+=`"${d.store}","${d.district}","${d.name}","${d.empId}","${d.title}","${d.date}","${dayFull(d.date)}","${d.shift}","${to12(p[0]?.slice(0,5))||''}","${to12(p[1]?.slice(0,5))||''}","${to12(p[2]?.slice(0,5))||''}","${to12(p[3]?.slice(0,5))||''}",${d.cnt},${d.noLunch},${d.isLate},"${d.lateDetail}"\n`;
+    lines.push([
+      d.store,d.district,d.name,d.empId,d.title,d.date,dayFull(d.date),d.shift,
+      to12(p[0]?.slice(0,5)),
+      to12(p[1]?.slice(0,5)),
+      to12(p[2]?.slice(0,5)),
+      to12(p[3]?.slice(0,5)),
+      d.cnt,
+      d.noLunch?'YES':'No',
+      d.isLate?'YES':'No',
+      d.lateDetail||''
+    ].map(csvEscape).join(','));
   });
-  const b=new Blob([csv],{type:'text/csv'});const u=URL.createObjectURL(b);
-  const a2=document.createElement('a');a2.href=u;a2.download=`blufox_${type}_${new Date().toISOString().slice(0,10)}.csv`;a2.click();URL.revokeObjectURL(u);
+  const csv=lines.join('\n');
+  // UTF-8 BOM so Excel renders em-dashes / accents correctly
+  const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  const fn=`blufox_${type}_${new Date().toISOString().slice(0,10)}.csv`;
+  const a=document.createElement('a');
+  a.href=url; a.download=fn; a.style.display='none';
+  document.body.appendChild(a);     // <-- critical for Firefox/Safari
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(url),1500);  // <-- don't revoke too early
+}
+
+/*************************************************************
+ * HIGHLIGHTED XLSX EXPORT
+ *
+ * Row coloring:
+ *   - Missed lunch (no matter if late or not) → light red row fill
+ *   - Late (no lunch issue)                    → light yellow row fill
+ *   - Both (late AND missed lunch)             → light orange row fill
+ *   - Clean                                    → no fill
+ *
+ * Cell accents on problem rows:
+ *   - "Total Punches" + "No Lunch" cells      → bright red / white bold
+ *   - "Clock In" + "Is Late" cells (if late)  → bright amber / black bold
+ *
+ * Header row is dark navy w/ white bold text, filter auto-applied,
+ * freeze first row, and column widths tuned for readability.
+ *************************************************************/
+const XLSX_COLORS = {
+  HEADER_BG: '1F2937', HEADER_FG: 'FFFFFF',
+  ROW_MISSED_LUNCH: 'FEE2E2',   // light red
+  ROW_LATE:         'FEF3C7',   // light yellow
+  ROW_BOTH:         'FED7AA',   // light orange
+  CELL_LUNCH_HOT:   'DC2626',   // bright red
+  CELL_LATE_HOT:    'F59E0B',   // amber
+  BORDER:           'D1D5DB'
+};
+
+function styleCell(ws, r, c, style){
+  const addr = XLSX.utils.encode_cell({r:r,c:c});
+  if(!ws[addr]) ws[addr] = {t:'s', v:''};
+  ws[addr].s = Object.assign({}, ws[addr].s||{}, style);
+}
+
+function mergeStyle(ws, r, c, partial){
+  const addr = XLSX.utils.encode_cell({r:r,c:c});
+  if(!ws[addr]) return;
+  const prev = ws[addr].s || {};
+  ws[addr].s = {
+    ...prev,
+    ...partial,
+    font: {...(prev.font||{}), ...(partial.font||{})},
+    fill: partial.fill || prev.fill,
+    alignment: {...(prev.alignment||{}), ...(partial.alignment||{})},
+    border: {...(prev.border||{}), ...(partial.border||{})}
+  };
+}
+
+function doExportXLSX(type){
+  if(typeof XLSX==='undefined' || !XLSX.utils){
+    alert('Excel export library did not load. Check your internet connection and reload.');
+    return;
+  }
+  const rows=buildRows(type);
+  if(!rows.length){alert('No data to export.');return;}
+
+  // Build AOA (array of arrays)
+  const aoa=[EXPORT_HEADERS];
+  rows.forEach(d=>{
+    const p=d.punches;
+    aoa.push([
+      d.store, d.district, d.name, d.empId, d.title, d.date, dayFull(d.date), d.shift,
+      p[0]?to12(p[0].slice(0,5)):'',
+      p[1]?to12(p[1].slice(0,5)):'',
+      p[2]?to12(p[2].slice(0,5)):'',
+      p[3]?to12(p[3].slice(0,5)):'',
+      d.cnt,
+      d.noLunch?'YES':'No',
+      d.isLate?'YES':'No',
+      d.lateDetail||''
+    ]);
+  });
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+  // Column widths (characters)
+  ws['!cols'] = [
+    {wch:16},{wch:14},{wch:22},{wch:11},{wch:18},{wch:11},{wch:10},{wch:8},
+    {wch:11},{wch:11},{wch:11},{wch:11},{wch:7},{wch:9},{wch:8},{wch:42}
+  ];
+
+  // Freeze the header row
+  ws['!views'] = [{state:'frozen', ySplit:1}];
+
+  // Enable autofilter on full data range
+  const lastRow = rows.length;
+  const lastCol = EXPORT_HEADERS.length - 1;
+  ws['!autofilter'] = {ref: XLSX.utils.encode_range({s:{r:0,c:0}, e:{r:lastRow,c:lastCol}})};
+
+  // === HEADER STYLING ===
+  const headerStyle = {
+    fill:{patternType:'solid', fgColor:{rgb:XLSX_COLORS.HEADER_BG}},
+    font:{name:'Calibri', sz:11, bold:true, color:{rgb:XLSX_COLORS.HEADER_FG}},
+    alignment:{horizontal:'left', vertical:'center', wrapText:false},
+    border:{
+      bottom:{style:'medium', color:{rgb:'F97316'}},
+      top:{style:'thin', color:{rgb:XLSX_COLORS.BORDER}}
+    }
+  };
+  for(let c=0; c<=lastCol; c++){
+    styleCell(ws, 0, c, headerStyle);
+  }
+
+  // === DATA ROW STYLING ===
+  const thinBorder = {style:'thin', color:{rgb:XLSX_COLORS.BORDER}};
+  rows.forEach((d, i) => {
+    const r = i + 1;
+
+    // Pick row fill color
+    let rowFillRgb = null;
+    if(d.noLunch && d.isLate)        rowFillRgb = XLSX_COLORS.ROW_BOTH;
+    else if(d.noLunch)               rowFillRgb = XLSX_COLORS.ROW_MISSED_LUNCH;
+    else if(d.isLate)                rowFillRgb = XLSX_COLORS.ROW_LATE;
+
+    // Apply base style to every cell in the row
+    for(let c=0; c<=lastCol; c++){
+      const base = {
+        font:{name:'Calibri', sz:10, color:{rgb:'111827'}},
+        alignment:{vertical:'center'},
+        border:{top:thinBorder, bottom:thinBorder, left:thinBorder, right:thinBorder}
+      };
+      if(rowFillRgb){
+        base.fill = {patternType:'solid', fgColor:{rgb:rowFillRgb}};
+      }
+      styleCell(ws, r, c, base);
+    }
+
+    // Accent problem cells on top of the row color
+    if(d.noLunch){
+      // Total Punches (col 12) and "No Lunch" flag (col 13)
+      [12, 13].forEach(c=>{
+        mergeStyle(ws, r, c, {
+          fill:{patternType:'solid', fgColor:{rgb:XLSX_COLORS.CELL_LUNCH_HOT}},
+          font:{bold:true, color:{rgb:'FFFFFF'}},
+          alignment:{horizontal:'center', vertical:'center'}
+        });
+      });
+    }
+    if(d.isLate){
+      // Clock In (col 8) and "Is Late" flag (col 14)
+      [8, 14].forEach(c=>{
+        mergeStyle(ws, r, c, {
+          fill:{patternType:'solid', fgColor:{rgb:XLSX_COLORS.CELL_LATE_HOT}},
+          font:{bold:true, color:{rgb:'111827'}},
+          alignment:{horizontal:'center', vertical:'center'}
+        });
+      });
+    }
+  });
+
+  // Build workbook
+  const wb = XLSX.utils.book_new();
+  const sheetName = type==='violations' ? 'Missed Lunches'
+                    : type==='late'      ? 'Late Arrivals'
+                    : 'All Punch Data';
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+
+  // Add a small legend sheet so managers know what the colors mean
+  const legend = XLSX.utils.aoa_to_sheet([
+    ['Blufox Lunch Punch Audit — Color Key'],
+    [''],
+    ['Row color', 'Meaning'],
+    ['Light red', 'Missed lunch punch (fewer than 4 punches that day)'],
+    ['Light yellow', 'Late clock-in'],
+    ['Light orange', 'BOTH missed lunch AND late clock-in'],
+    ['No color', 'Clean day — no issues'],
+    [''],
+    ['Cell color', 'Meaning'],
+    ['Bright red cell (white text)', 'The exact cell causing the lunch violation (Total Punches / No Lunch)'],
+    ['Amber cell', 'The exact cell causing the late flag (Clock In / Is Late)'],
+    [''],
+    ['Generated', new Date().toLocaleString()],
+    ['Export type', type==='violations'?'Missed Lunches only':type==='late'?'Late Arrivals only':'All punch data (filtered)'],
+    ['Row count', rows.length]
+  ]);
+  legend['!cols'] = [{wch:34}, {wch:70}];
+  // Style legend header
+  styleCell(legend, 0, 0, {
+    font:{bold:true, sz:14, color:{rgb:'F97316'}},
+    alignment:{horizontal:'left'}
+  });
+  // Style example color cells
+  styleCell(legend, 3, 0, {fill:{patternType:'solid', fgColor:{rgb:XLSX_COLORS.ROW_MISSED_LUNCH}}, font:{bold:true}});
+  styleCell(legend, 4, 0, {fill:{patternType:'solid', fgColor:{rgb:XLSX_COLORS.ROW_LATE}}, font:{bold:true}});
+  styleCell(legend, 5, 0, {fill:{patternType:'solid', fgColor:{rgb:XLSX_COLORS.ROW_BOTH}}, font:{bold:true}});
+  styleCell(legend, 9, 0, {fill:{patternType:'solid', fgColor:{rgb:XLSX_COLORS.CELL_LUNCH_HOT}}, font:{bold:true, color:{rgb:'FFFFFF'}}});
+  styleCell(legend, 10, 0, {fill:{patternType:'solid', fgColor:{rgb:XLSX_COLORS.CELL_LATE_HOT}}, font:{bold:true}});
+  XLSX.utils.book_append_sheet(wb, legend, 'Legend');
+
+  const fn = `blufox_${type}_${new Date().toISOString().slice(0,10)}.xlsx`;
+  try {
+    XLSX.writeFile(wb, fn);
+  } catch(err) {
+    console.error('XLSX write failed:', err);
+    alert('Excel export failed: '+err.message+'\n\nFalling back to CSV.');
+    doExport(type);
+  }
 }
 </script>
 </body>
