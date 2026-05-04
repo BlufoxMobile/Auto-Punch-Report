@@ -187,8 +187,8 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
 </div>
 
 <script>
-const MY_STORES=['Bourbonnais','Burbank','Cicero','Dekalb','Elkhart','Evanston','Evergreen Park','Frankfort','Glenview','Greeneville','Hammond','Johnson City','Kildeer','Michigan City','Oak Ridge','Round Lake Beach','Schererville','South Bend','South Knoxville','South Skokie','Tinley Park','Uptown','Valparaiso'];
-const DISTRICTS={'Big South':['Greeneville','Johnson City','Oak Ridge','South Knoxville','Uptown'],'Indiana Outlawz':['Elkhart','Michigan City','South Bend','Valparaiso'],'South Side':['Bourbonnais','Burbank','Cicero','Evergreen Park','Frankfort','Tinley Park'],'North Side':['Dekalb','Evanston','Glenview','Hammond','Kildeer','Round Lake Beach','Schererville','South Skokie']};
+const MY_STORES=['Bourbonnais','Burbank','Calumet City','Cicero','Dekalb','Elkhart','Evanston','Evergreen Park','Frankfort','Glenview','Greeneville','Hammond','Johnson City','Kildeer','Michigan City','Oak Ridge','Round Lake Beach','Schererville','South Bend','South Knoxville','South Skokie','Tinley Park','Uptown','Valparaiso'];
+const DISTRICTS={'Big South':['Greeneville','Johnson City','Oak Ridge','South Knoxville','Uptown'],'Indiana Outlawz':['Elkhart','Michigan City','South Bend','Valparaiso'],'South Side':['Bourbonnais','Burbank','Calumet City','Cicero','Evergreen Park','Frankfort','Tinley Park'],'North Side':['Dekalb','Evanston','Glenview','Hammond','Kildeer','Round Lake Beach','Schererville','South Skokie']};
 const MGR_TITLES=['Store Manager','DM','Ops Coordinator'];
 function getDist(s){for(const[d,st]of Object.entries(DISTRICTS)){if(st.includes(s))return d;}return'Unknown';}
 function esc(s){return s.replace(/'/g,"\\'");}
