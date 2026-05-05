@@ -138,15 +138,14 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
   <div class="header-icon">🕐</div>
   <div>
     <h1><span>Blufox</span> Lunch Punch Audit</h1>
-    <p>Upload your TimeCards extract to audit lunch punches, tardiness &amp; manager compliance</p>
+    <p>Auto-loaded from your Daily Upload — audits lunch punches, tardiness &amp; manager compliance</p>
   </div>
 </div>
 
-<div class="upload-zone" id="uploadZone">
-  <div class="icon">📂</div>
-  <div class="label">Drop your TimeCards Excel file here</div>
-  <div class="sub">or click to browse — accepts .xlsx / .xls</div>
-  <input type="file" id="fileInput" accept=".xlsx,.xls,.csv">
+<div class="upload-zone" id="loadStatus" style="cursor:default">
+  <div class="icon">⏳</div>
+  <div class="label" id="loadLabel">Loading punch data…</div>
+  <div class="sub" id="loadSub">Pulling latest BreakComplianceExtract from the daily upload</div>
   <div id="fileBadge"></div>
 </div>
 
@@ -253,80 +252,110 @@ let dayRecords=[];
 let drill=null;
 
 function parseExcel(data){
+  // The Daily Upload pushes BreakComplianceExtract.xlsx, which has one row per
+  // employee per day with up to four punch columns (Punch 1 In/Out, Punch 2 In/Out).
   const wb=XLSX.read(data,{type:'array',cellDates:true});
-  let sn=wb.SheetNames.find(s=>s.toLowerCase().includes('punch'))||wb.SheetNames[0];
+  let sn=wb.SheetNames.find(s=>/break.*compliance/i.test(s))
+       ||wb.SheetNames.find(s=>/punch/i.test(s))
+       ||wb.SheetNames[0];
   const ws=wb.Sheets[sn];
-  const rows=XLSX.utils.sheet_to_json(ws,{defval:'',raw:false});
+  const rows=XLSX.utils.sheet_to_json(ws,{defval:'',raw:true,cellDates:true});
+  if(!rows.length){alert('No rows found in punch data');return;}
 
-  if(!rows.length){alert('No data found');return;}
+  // Resolve column names defensively in case they shift slightly
   const H=Object.keys(rows[0]);
-  const cS=H.find(h=>/^store$/i.test(h.trim()))||H[0];
-  const cN=H.find(h=>/^name$/i.test(h.trim()))||H[2];
-  const cE=H.find(h=>/employee.?id/i.test(h.trim()))||H[3];
-  const cD=H.find(h=>/^date$/i.test(h.trim()))||H[4];
-  const cT=H.find(h=>/^title$/i.test(h.trim()))||H[5];
-  const cP=H.find(h=>/punch.?time/i.test(h.trim()))||H[6];
+  const findH=(re)=>H.find(h=>re.test(h.trim()));
+  const cStore = findH(/^store$/i)              || 'Store';
+  const cEmp   = findH(/^employee$/i)           || findH(/employee.?name/i) || 'Employee';
+  const cTitle = findH(/^job\s*title$/i)        || findH(/^title$/i)        || 'Job Title';
+  const cDate  = findH(/punch.*in.*date/i)      || findH(/^date$/i)         || 'Punch In Date';
+  const cP1in  = findH(/punch.?1.*time.*in\b/i) || 'Punch 1 Time In';
+  const cP1out = findH(/punch.?1.*time.*out/i)  || 'Punch 1 Time Out';
+  const cP2in  = findH(/punch.?2.*time.*in\b/i) || 'Punch 2 Time In';
+  const cP2out = findH(/punch.?2.*time.*out/i)  || 'Punch 2 Time Out';
 
-  const rows2=XLSX.utils.sheet_to_json(ws,{defval:'',raw:true});
+  dayRecords = [];
+  rows.forEach(r => {
+    const store = String(r[cStore]||'').trim();
+    if(!MY_STORES.includes(store)) return;
 
-  const grouped={};
-  rows2.forEach(r=>{
-    const store=(r[cS]||'').toString().trim();
-    if(!MY_STORES.includes(store))return;
+    const name  = String(r[cEmp]||'').trim();
+    if(!name) return;
+    const title = String(r[cTitle]||'').trim();
+    const dateStr = localDateStr(r[cDate]);
 
-    const dateRaw=r[cD];
-    const punchRaw=r[cP];
+    const punches = [];
+    [cP1in, cP1out, cP2in, cP2out].forEach(col => {
+      const v = r[col];
+      if(v == null || v === '') return;
+      const t = localTimeStr(v);
+      if(t && t !== '00:00:00') punches.push(t);
+    });
+    if(!punches.length) return;
+    punches.sort();
 
-    const dateStr=localDateStr(dateRaw);
-    const timeHHMMSS=localTimeStr(punchRaw);
-
-    const k=`${store}||${(r[cE]||'')}||${dateStr}`;
-    if(!grouped[k])grouped[k]={
+    const d = {
       store,
-      name:(r[cN]||'').toString().trim(),
-      empId:(r[cE]||'').toString().trim(),
-      title:(r[cT]||'').toString().trim(),
-      date:dateStr,
-      punches:[]
+      name,
+      empId: name,                 // file has no emp ID; name is the unique key per store
+      title,
+      date: dateStr,
+      punches,
+      cnt: punches.length,
+      isMgr: MGR_TITLES.includes(title),
+      dayNum: dayOfWeekFromStr(dateStr),
+      district: getDist(store)
     };
-    grouped[k].punches.push(timeHHMMSS);
-  });
+    d.noLunch = d.cnt < 4 && d.cnt >= 1;
 
-  dayRecords=Object.values(grouped).map(d=>{
-    d.punches.sort();
-    d.cnt=d.punches.length;
-    d.isMgr=MGR_TITLES.includes(d.title);
-    d.noLunch=d.cnt<4&&d.cnt>=1;
-    d.dayNum=dayOfWeekFromStr(d.date);
-    d.district=getDist(d.store);
-
-    const ft=d.punches[0]?d.punches[0].slice(0,5):'';
-    d.firstTime=ft;
-    const fh=parseInt(ft.split(':')[0],10);
-    d.shift=fh<11?'opener':'closer';
+    const ft = d.punches[0] ? d.punches[0].slice(0,5) : '';
+    d.firstTime = ft;
+    const fh = parseInt(ft.split(':')[0],10);
+    d.shift = fh < 11 ? 'opener' : 'closer';
 
     d.isLate=false; d.lateReason=''; d.lateDetail='';
     if(d.isMgr){
-      let cut=d.dayNum===1?'09:00':d.dayNum===2?'08:30':'09:40';
-      d.mgrCutoff=cut;
-      if(ft>cut){d.isLate=true;d.lateReason='LATE';d.lateDetail=`Clocked in ${to12Short(ft)}, should be in by ${to12Short(cut)}`;}
-    }else{
-      if(d.shift==='opener'&&ft>'09:40'){d.isLate=true;d.lateReason='LATE';d.lateDetail=`Clocked in ${to12Short(ft)}, opener due by ${to12Short('09:40')}`;}
-      else if(d.shift==='closer'&&ft>'12:10'){d.isLate=true;d.lateReason='LATE';d.lateDetail=`Clocked in ${to12Short(ft)}, closer due by ${to12Short('12:10')}`;}
+      let cut = d.dayNum===1 ? '09:00' : d.dayNum===2 ? '08:30' : '09:40';
+      d.mgrCutoff = cut;
+      if(ft > cut){ d.isLate=true; d.lateReason='LATE'; d.lateDetail=`Clocked in ${to12Short(ft)}, should be in by ${to12Short(cut)}`; }
+    } else {
+      if(d.shift==='opener' && ft>'09:40'){ d.isLate=true; d.lateReason='LATE'; d.lateDetail=`Clocked in ${to12Short(ft)}, opener due by ${to12Short('09:40')}`; }
+      else if(d.shift==='closer' && ft>'12:10'){ d.isLate=true; d.lateReason='LATE'; d.lateDetail=`Clocked in ${to12Short(ft)}, closer due by ${to12Short('12:10')}`; }
     }
-    return d;
+    dayRecords.push(d);
   });
+
   buildDashboard();
 }
 
-// ===== FILE HANDLING =====
-const uz=document.getElementById('uploadZone'),fi=document.getElementById('fileInput');
-uz.addEventListener('click',()=>fi.click());
-uz.addEventListener('dragover',e=>{e.preventDefault();uz.classList.add('dragover');});
-uz.addEventListener('dragleave',()=>uz.classList.remove('dragover'));
-uz.addEventListener('drop',e=>{e.preventDefault();uz.classList.remove('dragover');if(e.dataTransfer.files.length)hf(e.dataTransfer.files[0]);});
-fi.addEventListener('change',e=>{if(e.target.files.length)hf(e.target.files[0]);});
-function hf(f){document.getElementById('fileBadge').innerHTML=`<div class="file-badge">✔ ${f.name} (${(f.size/1024).toFixed(0)} KB)</div>`;const r=new FileReader();r.onload=e=>parseExcel(e.target.result);r.readAsArrayBuffer(f);}
+// ===== AUTO-LOAD FROM REPO =====
+// The Daily Upload page commits BreakComplianceExtract.xlsx to data/punch-data.xlsx
+// in this repo. The page fetches that file on load — no manual upload needed here.
+const PUNCH_DATA_URL = 'data/punch-data.xlsx';
+
+async function autoLoadPunchData(){
+  const labelEl = document.getElementById('loadLabel');
+  const subEl   = document.getElementById('loadSub');
+  const badgeEl = document.getElementById('fileBadge');
+  try {
+    const resp = await fetch(PUNCH_DATA_URL + '?t=' + Date.now(), {cache:'no-store'});
+    if(!resp.ok) throw new Error('HTTP ' + resp.status + ' — has the file been uploaded yet?');
+    const buf = await resp.arrayBuffer();
+    if(!buf || !buf.byteLength) throw new Error('Empty response');
+    parseExcel(buf);
+    const lastModified = resp.headers.get('last-modified');
+    labelEl.textContent = '✔ Punch data loaded';
+    subEl.textContent   = `${dayRecords.length.toLocaleString()} day records across your stores` +
+      (lastModified ? ` • file last updated ${new Date(lastModified).toLocaleString()}` : '');
+    badgeEl.innerHTML = `<div class="file-badge">✔ Auto-loaded ${(buf.byteLength/1024).toFixed(0)} KB</div>`;
+  } catch(err){
+    labelEl.textContent = '⚠️ Could not load punch data';
+    subEl.innerHTML = `<span style="color:var(--red)">${err.message}</span><br>` +
+      `<span style="font-size:11px">Upload your BreakComplianceExtract.xlsx via the ` +
+      `<a href="https://blufoxmobile.github.io/Daily-Sales-Report/upload.html" style="color:var(--accent);text-decoration:underline">Daily Upload page</a>, then refresh.</span>`;
+  }
+}
+document.addEventListener('DOMContentLoaded', autoLoadPunchData);
 
 function buildDashboard(){
   document.getElementById('dashboard').classList.add('active');
