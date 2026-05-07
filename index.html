@@ -252,21 +252,51 @@ let dayRecords=[];
 let drill=null;
 
 function parseExcel(data){
-  // The Daily Upload pushes BreakComplianceExtract.xlsx, which has one row per
-  // employee per day with up to four punch columns (Punch 1 In/Out, Punch 2 In/Out).
+  // Supports BOTH file formats out of the box:
+  //   * BreakComplianceExtract.xlsx — one row per employee per day, with
+  //     Punch 1 In/Out + Punch 2 In/Out columns (the original wide format).
+  //   * TimeCardsExtract_PunchStatus.xlsx (sheet "PunchStatusExtract") — one
+  //     row per individual punch with Date, Punch Time, Punch Status. The
+  //     parser groups these rows into employee-days automatically.
   const wb=XLSX.read(data,{type:'array',cellDates:true});
-  let sn=wb.SheetNames.find(s=>/break.*compliance/i.test(s))
+  let sn=wb.SheetNames.find(s=>/punch.?status/i.test(s))
+       ||wb.SheetNames.find(s=>/break.*compliance/i.test(s))
        ||wb.SheetNames.find(s=>/punch/i.test(s))
        ||wb.SheetNames[0];
   const ws=wb.Sheets[sn];
   const rows=XLSX.utils.sheet_to_json(ws,{defval:'',raw:true,cellDates:true});
   if(!rows.length){alert('No rows found in punch data');return;}
 
-  // Resolve column names defensively in case they shift slightly
   const H=Object.keys(rows[0]);
   const findH=(re)=>H.find(h=>re.test(h.trim()));
+
+  // Long form has a single "Punch Time" column (one row = one punch).
+  // Wide form has "Punch 1 Time In" etc. (one row = one whole employee-day).
+  const cPunchTime = findH(/^punch\s*time$/i);
+
+  let raw;
+  if (cPunchTime) {
+    raw = parseLongFormPunches(rows, findH, cPunchTime);
+  } else {
+    raw = parseWideFormPunches(rows, findH);
+  }
+
+  dayRecords = raw.map(decorateDayRecord);
+
+  if (!dayRecords.length) {
+    alert('No punch records were found for your stores in this file. ' +
+          'Double-check that the file contains data for the configured stores.');
+    return;
+  }
+
+  buildDashboard();
+}
+
+// ===== WIDE-FORM PARSER (original BreakComplianceExtract) =====
+function parseWideFormPunches(rows, findH){
   const cStore = findH(/^store$/i)              || 'Store';
   const cEmp   = findH(/^employee$/i)           || findH(/employee.?name/i) || 'Employee';
+  const cEmpId = findH(/employee.?id/i)         || findH(/^emp\s*id$/i)     || null;
   const cTitle = findH(/^job\s*title$/i)        || findH(/^title$/i)        || 'Job Title';
   const cDate  = findH(/punch.*in.*date/i)      || findH(/^date$/i)         || 'Punch In Date';
   const cP1in  = findH(/punch.?1.*time.*in\b/i) || 'Punch 1 Time In';
@@ -274,7 +304,7 @@ function parseExcel(data){
   const cP2in  = findH(/punch.?2.*time.*in\b/i) || 'Punch 2 Time In';
   const cP2out = findH(/punch.?2.*time.*out/i)  || 'Punch 2 Time Out';
 
-  dayRecords = [];
+  const out = [];
   rows.forEach(r => {
     const store = String(r[cStore]||'').trim();
     if(!MY_STORES.includes(store)) return;
@@ -294,38 +324,93 @@ function parseExcel(data){
     if(!punches.length) return;
     punches.sort();
 
-    const d = {
-      store,
-      name,
-      empId: name,                 // file has no emp ID; name is the unique key per store
-      title,
-      date: dateStr,
-      punches,
-      cnt: punches.length,
-      isMgr: MGR_TITLES.includes(title),
-      dayNum: dayOfWeekFromStr(dateStr),
-      district: getDist(store)
-    };
-    d.noLunch = d.cnt < 4 && d.cnt >= 1;
+    const empId = cEmpId && r[cEmpId] != null && String(r[cEmpId]).trim() !== ''
+      ? String(r[cEmpId]).trim() : name;
+    out.push({store, name, empId, title, date: dateStr, punches});
+  });
+  return out;
+}
 
-    const ft = d.punches[0] ? d.punches[0].slice(0,5) : '';
-    d.firstTime = ft;
-    const fh = parseInt(ft.split(':')[0],10);
-    d.shift = fh < 11 ? 'opener' : 'closer';
+// ===== LONG-FORM PARSER (PunchStatusExtract / TimeCardsExtract) =====
+function parseLongFormPunches(rows, findH, cPunchTime){
+  const cStore = findH(/^store$/i)        || 'Store';
+  const cName  = findH(/^name$/i)         || findH(/^employee$/i) || findH(/employee.?name/i) || 'Name';
+  const cEmpId = findH(/employee.?id/i)   || findH(/^emp\s*id$/i) || null;
+  const cTitle = findH(/^job\s*title$/i)  || findH(/^title$/i)    || 'Title';
+  const cDate  = findH(/^date$/i)         || findH(/punch.*in.*date/i) || 'Date';
 
-    d.isLate=false; d.lateReason=''; d.lateDetail='';
-    if(d.isMgr){
-      let cut = d.dayNum===1 ? '09:00' : d.dayNum===2 ? '08:30' : '09:40';
-      d.mgrCutoff = cut;
-      if(ft > cut){ d.isLate=true; d.lateReason='LATE'; d.lateDetail=`Clocked in ${to12Short(ft)}, should be in by ${to12Short(cut)}`; }
-    } else {
-      if(d.shift==='opener' && ft>'09:40'){ d.isLate=true; d.lateReason='LATE'; d.lateDetail=`Clocked in ${to12Short(ft)}, opener due by ${to12Short('09:40')}`; }
-      else if(d.shift==='closer' && ft>'12:10'){ d.isLate=true; d.lateReason='LATE'; d.lateDetail=`Clocked in ${to12Short(ft)}, closer due by ${to12Short('12:10')}`; }
+  // Group every individual punch by (store, employee, date)
+  const groups = {};
+  rows.forEach(r => {
+    const store = String(r[cStore]||'').trim();
+    if(!MY_STORES.includes(store)) return;
+
+    const name = String(r[cName]||'').trim();
+    if(!name) return;
+
+    // Punch Time carries both the date and the time-of-day; the Date column
+    // is also a full datetime in this format. Either works.
+    const dateRaw = r[cPunchTime] || r[cDate];
+    if(!dateRaw) return;
+    const dateStr = localDateStr(dateRaw);
+
+    const timeRaw = r[cPunchTime] || r[cDate];
+    const timeStr = localTimeStr(timeRaw);
+    if(!timeStr || timeStr === '00:00:00') return;
+
+    const empIdVal = cEmpId && r[cEmpId] != null && String(r[cEmpId]).trim() !== ''
+      ? String(r[cEmpId]).trim() : name;
+    const title = String(r[cTitle]||'').trim();
+
+    const key = store + '|' + empIdVal + '|' + dateStr;
+    if(!groups[key]){
+      groups[key] = {store, name, empId: empIdVal, title, date: dateStr, punches: []};
+    } else if(!groups[key].title && title){
+      // Some rows have a blank title — keep the first non-blank we see.
+      groups[key].title = title;
     }
-    dayRecords.push(d);
+    // De-dupe identical timestamps (same punch logged twice via Edited rows)
+    if(!groups[key].punches.includes(timeStr)){
+      groups[key].punches.push(timeStr);
+    }
   });
 
-  buildDashboard();
+  const out = Object.values(groups);
+  out.forEach(g => g.punches.sort());
+  return out;
+}
+
+// ===== Shared decorator: turns a raw (store/name/date/punches) record into a dayRecord =====
+function decorateDayRecord(g){
+  const d = {
+    store: g.store,
+    name: g.name,
+    empId: g.empId || g.name,
+    title: g.title || '',
+    date: g.date,
+    punches: g.punches,
+    cnt: g.punches.length,
+    isMgr: MGR_TITLES.includes(g.title || ''),
+    dayNum: dayOfWeekFromStr(g.date),
+    district: getDist(g.store)
+  };
+  d.noLunch = d.cnt < 4 && d.cnt >= 1;
+
+  const ft = d.punches[0] ? d.punches[0].slice(0,5) : '';
+  d.firstTime = ft;
+  const fh = parseInt(ft.split(':')[0],10);
+  d.shift = fh < 11 ? 'opener' : 'closer';
+
+  d.isLate=false; d.lateReason=''; d.lateDetail='';
+  if(d.isMgr){
+    let cut = d.dayNum===1 ? '09:00' : d.dayNum===2 ? '08:30' : '09:40';
+    d.mgrCutoff = cut;
+    if(ft > cut){ d.isLate=true; d.lateReason='LATE'; d.lateDetail=`Clocked in ${to12Short(ft)}, should be in by ${to12Short(cut)}`; }
+  } else {
+    if(d.shift==='opener' && ft>'09:40'){ d.isLate=true; d.lateReason='LATE'; d.lateDetail=`Clocked in ${to12Short(ft)}, opener due by ${to12Short('09:40')}`; }
+    else if(d.shift==='closer' && ft>'12:10'){ d.isLate=true; d.lateReason='LATE'; d.lateDetail=`Clocked in ${to12Short(ft)}, closer due by ${to12Short('12:10')}`; }
+  }
+  return d;
 }
 
 // ===== AUTO-LOAD FROM REPO =====
