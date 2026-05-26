@@ -189,6 +189,13 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
 const MY_STORES=['Bourbonnais','Burbank','Calumet City','Cicero','Dekalb','Elkhart','Evanston','Evergreen Park','Frankfort','Glenview','Greeneville','Hammond','Johnson City','Kildeer','Michigan City','Oak Ridge','Round Lake Beach','Schererville','South Bend','South Knoxville','South Skokie','Tinley Park','Uptown','Valparaiso'];
 const DISTRICTS={'Big South':['Greeneville','Johnson City','Oak Ridge','South Knoxville','Uptown'],'Indiana Outlawz':['Elkhart','Michigan City','South Bend','Valparaiso'],'South Side':['Bourbonnais','Burbank','Calumet City','Cicero','Evergreen Park','Frankfort','Tinley Park'],'North Side':['Dekalb','Evanston','Glenview','Hammond','Kildeer','Round Lake Beach','Schererville','South Skokie']};
 const MGR_TITLES=['Store Manager','DM','Ops Coordinator'];
+
+// Punches within this many minutes of the previous KEPT punch are treated as
+// the same logical punch (handles rapid-fire button taps / system retries).
+// 5 minutes is short enough to never collapse a clock-in & clock-out for lunch
+// but long enough to absorb every burst we've seen in real data.
+const PUNCH_DEDUP_WINDOW_MIN = 5;
+
 function getDist(s){for(const[d,st]of Object.entries(DISTRICTS)){if(st.includes(s))return d;}return'Unknown';}
 function esc(s){return s.replace(/'/g,"\\'");}
 
@@ -222,6 +229,28 @@ function localHHMM(d){
   const h=String(d.getHours()).padStart(2,'0');
   const m=String(d.getMinutes()).padStart(2,'0');
   return `${h}:${m}`;
+}
+
+// Convert "HH:MM:SS" to total seconds since midnight (used for dedup math)
+function hhmmssToSec(t){
+  if(!t || t.length < 5) return 0;
+  const p = t.split(':');
+  return (parseInt(p[0],10)||0)*3600 + (parseInt(p[1],10)||0)*60 + (parseInt(p[2]||'0',10)||0);
+}
+
+// Collapse rapid-fire punches: walks the sorted timestamp list and skips any
+// punch that falls within PUNCH_DEDUP_WINDOW_MIN of the previously KEPT punch.
+// Input/output: array of "HH:MM:SS" strings, sorted ascending.
+function dedupRapidPunches(times){
+  if(!times || times.length <= 1) return times || [];
+  const sorted = [...times].sort();
+  const out = [sorted[0]];
+  const windowSec = PUNCH_DEDUP_WINDOW_MIN * 60;
+  for(let i=1; i<sorted.length; i++){
+    const gap = hhmmssToSec(sorted[i]) - hhmmssToSec(out[out.length-1]);
+    if(gap > windowSec) out.push(sorted[i]);
+  }
+  return out;
 }
 
 function to12(hhmm){
@@ -369,14 +398,17 @@ function parseLongFormPunches(rows, findH, cPunchTime){
       // Some rows have a blank title — keep the first non-blank we see.
       groups[key].title = title;
     }
-    // De-dupe identical timestamps (same punch logged twice via Edited rows)
-    if(!groups[key].punches.includes(timeStr)){
-      groups[key].punches.push(timeStr);
-    }
+    // Collect every raw punch timestamp; dedup happens AFTER sorting (below)
+    // so we correctly collapse bursts of rapid-fire punches.
+    groups[key].punches.push(timeStr);
   });
 
   const out = Object.values(groups);
-  out.forEach(g => g.punches.sort());
+  // Sort + collapse rapid-fire bursts (e.g. an employee mashing the clock-in
+  // button 8 times in 3 seconds when the system is slow to respond)
+  out.forEach(g => {
+    g.punches = dedupRapidPunches(g.punches);
+  });
   return out;
 }
 
@@ -741,17 +773,6 @@ function buildRows(type){
   return rows;
 }
 
-/*************************************************************
- * PLAIN CSV EXPORT — now works reliably cross-browser
- *
- * Fixes applied vs. the old broken version:
- *   1. The <a> element is appended to document.body BEFORE .click() —
- *      Firefox and Safari silently no-op if the link isn't in the DOM.
- *   2. URL.revokeObjectURL(...) is deferred 1s so the browser has
- *      time to actually start the download before the blob is freed.
- *   3. A UTF-8 BOM is prepended so Excel opens special chars correctly.
- *   4. Commas inside the "Late Detail" field are now quoted/escaped.
- *************************************************************/
 function csvEscape(v){
   const s=String(v==null?'':v);
   if(/[",\n]/.test(s)) return '"'+s.replace(/"/g,'""')+'"';
@@ -777,41 +798,24 @@ function doExport(type){
     ].map(csvEscape).join(','));
   });
   const csv=lines.join('\n');
-  // UTF-8 BOM so Excel renders em-dashes / accents correctly
   const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});
   const url=URL.createObjectURL(blob);
   const fn=`blufox_${type}_${new Date().toISOString().slice(0,10)}.csv`;
   const a=document.createElement('a');
   a.href=url; a.download=fn; a.style.display='none';
-  document.body.appendChild(a);     // <-- critical for Firefox/Safari
+  document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  setTimeout(()=>URL.revokeObjectURL(url),1500);  // <-- don't revoke too early
+  setTimeout(()=>URL.revokeObjectURL(url),1500);
 }
 
-/*************************************************************
- * HIGHLIGHTED XLSX EXPORT
- *
- * Row coloring:
- *   - Missed lunch (no matter if late or not) → light red row fill
- *   - Late (no lunch issue)                    → light yellow row fill
- *   - Both (late AND missed lunch)             → light orange row fill
- *   - Clean                                    → no fill
- *
- * Cell accents on problem rows:
- *   - "Total Punches" + "No Lunch" cells      → bright red / white bold
- *   - "Clock In" + "Is Late" cells (if late)  → bright amber / black bold
- *
- * Header row is dark navy w/ white bold text, filter auto-applied,
- * freeze first row, and column widths tuned for readability.
- *************************************************************/
 const XLSX_COLORS = {
   HEADER_BG: '1F2937', HEADER_FG: 'FFFFFF',
-  ROW_MISSED_LUNCH: 'FEE2E2',   // light red
-  ROW_LATE:         'FEF3C7',   // light yellow
-  ROW_BOTH:         'FED7AA',   // light orange
-  CELL_LUNCH_HOT:   'DC2626',   // bright red
-  CELL_LATE_HOT:    'F59E0B',   // amber
+  ROW_MISSED_LUNCH: 'FEE2E2',
+  ROW_LATE:         'FEF3C7',
+  ROW_BOTH:         'FED7AA',
+  CELL_LUNCH_HOT:   'DC2626',
+  CELL_LATE_HOT:    'F59E0B',
   BORDER:           'D1D5DB'
 };
 
@@ -843,7 +847,6 @@ function doExportXLSX(type){
   const rows=buildRows(type);
   if(!rows.length){alert('No data to export.');return;}
 
-  // Build AOA (array of arrays)
   const aoa=[EXPORT_HEADERS];
   rows.forEach(d=>{
     const p=d.punches;
@@ -862,21 +865,17 @@ function doExportXLSX(type){
 
   const ws = XLSX.utils.aoa_to_sheet(aoa);
 
-  // Column widths (characters)
   ws['!cols'] = [
     {wch:16},{wch:14},{wch:22},{wch:11},{wch:18},{wch:11},{wch:10},{wch:8},
     {wch:11},{wch:11},{wch:11},{wch:11},{wch:7},{wch:9},{wch:8},{wch:42}
   ];
 
-  // Freeze the header row
   ws['!views'] = [{state:'frozen', ySplit:1}];
 
-  // Enable autofilter on full data range
   const lastRow = rows.length;
   const lastCol = EXPORT_HEADERS.length - 1;
   ws['!autofilter'] = {ref: XLSX.utils.encode_range({s:{r:0,c:0}, e:{r:lastRow,c:lastCol}})};
 
-  // === HEADER STYLING ===
   const headerStyle = {
     fill:{patternType:'solid', fgColor:{rgb:XLSX_COLORS.HEADER_BG}},
     font:{name:'Calibri', sz:11, bold:true, color:{rgb:XLSX_COLORS.HEADER_FG}},
@@ -890,18 +889,15 @@ function doExportXLSX(type){
     styleCell(ws, 0, c, headerStyle);
   }
 
-  // === DATA ROW STYLING ===
   const thinBorder = {style:'thin', color:{rgb:XLSX_COLORS.BORDER}};
   rows.forEach((d, i) => {
     const r = i + 1;
 
-    // Pick row fill color
     let rowFillRgb = null;
     if(d.noLunch && d.isLate)        rowFillRgb = XLSX_COLORS.ROW_BOTH;
     else if(d.noLunch)               rowFillRgb = XLSX_COLORS.ROW_MISSED_LUNCH;
     else if(d.isLate)                rowFillRgb = XLSX_COLORS.ROW_LATE;
 
-    // Apply base style to every cell in the row
     for(let c=0; c<=lastCol; c++){
       const base = {
         font:{name:'Calibri', sz:10, color:{rgb:'111827'}},
@@ -914,9 +910,7 @@ function doExportXLSX(type){
       styleCell(ws, r, c, base);
     }
 
-    // Accent problem cells on top of the row color
     if(d.noLunch){
-      // Total Punches (col 12) and "No Lunch" flag (col 13)
       [12, 13].forEach(c=>{
         mergeStyle(ws, r, c, {
           fill:{patternType:'solid', fgColor:{rgb:XLSX_COLORS.CELL_LUNCH_HOT}},
@@ -926,7 +920,6 @@ function doExportXLSX(type){
       });
     }
     if(d.isLate){
-      // Clock In (col 8) and "Is Late" flag (col 14)
       [8, 14].forEach(c=>{
         mergeStyle(ws, r, c, {
           fill:{patternType:'solid', fgColor:{rgb:XLSX_COLORS.CELL_LATE_HOT}},
@@ -937,14 +930,12 @@ function doExportXLSX(type){
     }
   });
 
-  // Build workbook
   const wb = XLSX.utils.book_new();
   const sheetName = type==='violations' ? 'Missed Lunches'
                     : type==='late'      ? 'Late Arrivals'
                     : 'All Punch Data';
   XLSX.utils.book_append_sheet(wb, ws, sheetName);
 
-  // Add a small legend sheet so managers know what the colors mean
   const legend = XLSX.utils.aoa_to_sheet([
     ['Blufox Lunch Punch Audit — Color Key'],
     [''],
@@ -963,12 +954,10 @@ function doExportXLSX(type){
     ['Row count', rows.length]
   ]);
   legend['!cols'] = [{wch:34}, {wch:70}];
-  // Style legend header
   styleCell(legend, 0, 0, {
     font:{bold:true, sz:14, color:{rgb:'F97316'}},
     alignment:{horizontal:'left'}
   });
-  // Style example color cells
   styleCell(legend, 3, 0, {fill:{patternType:'solid', fgColor:{rgb:XLSX_COLORS.ROW_MISSED_LUNCH}}, font:{bold:true}});
   styleCell(legend, 4, 0, {fill:{patternType:'solid', fgColor:{rgb:XLSX_COLORS.ROW_LATE}}, font:{bold:true}});
   styleCell(legend, 5, 0, {fill:{patternType:'solid', fgColor:{rgb:XLSX_COLORS.ROW_BOTH}}, font:{bold:true}});
