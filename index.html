@@ -131,6 +131,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
   .punch-step{min-width:65px}
 }
 </style>
+<script src="https://blufoxmobile.github.io/Daily-Sales-Report/store-aliases.js"></script>
 </head>
 <body>
 
@@ -335,8 +336,8 @@ function parseWideFormPunches(rows, findH){
 
   const out = [];
   rows.forEach(r => {
-    const store = String(r[cStore]||'').trim();
-    if(!MY_STORES.includes(store)) return;
+    const store = (window.BLUFOX_STORES ? window.BLUFOX_STORES.normalizeStore(r[cStore]) : String(r[cStore]||'').trim());
+    if(!(window.BLUFOX_STORES ? window.BLUFOX_STORES.isMyStore(store) : MY_STORES.includes(store))) return;
 
     const name  = String(r[cEmp]||'').trim();
     if(!name) return;
@@ -371,8 +372,8 @@ function parseLongFormPunches(rows, findH, cPunchTime){
   // Group every individual punch by (store, employee, date)
   const groups = {};
   rows.forEach(r => {
-    const store = String(r[cStore]||'').trim();
-    if(!MY_STORES.includes(store)) return;
+    const store = (window.BLUFOX_STORES ? window.BLUFOX_STORES.normalizeStore(r[cStore]) : String(r[cStore]||'').trim());
+    if(!(window.BLUFOX_STORES ? window.BLUFOX_STORES.isMyStore(store) : MY_STORES.includes(store))) return;
 
     const name = String(r[cName]||'').trim();
     if(!name) return;
