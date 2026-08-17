@@ -217,7 +217,14 @@ function normStore(v){
   if(window.BLUFOX_STORES && !document.querySelector('[data-failed]')){
     try{ return window.BLUFOX_STORES.normalizeStore(v); }catch(e){}
   }
-  return String(v||'').trim();
+  // Fallback only if store-aliases.js failed to load. Agrees with v2 for the
+  // legacy spellings: drop a trailing " Xfinity Store", then resolve the
+  // bare-city aliases so they still land in MY_STORES.
+  const base = String(v||'').replace(/\u00a0/g,' ').replace(/\s+/g,' ').trim()
+                 .replace(/\s+xfinity\s+store\s*$/i,'');
+  if(/^skokie$/i.test(base)) return 'South Skokie';
+  if(/^knoxville$/i.test(base)) return 'South Knoxville';
+  return base;
 }
 function isMyStore(s){
   if(window.BLUFOX_STORES && window.BLUFOX_STORES.isMyStore && !document.querySelector('[data-failed]')){
